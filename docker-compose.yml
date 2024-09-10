@@ -1,0 +1,95 @@
+version: '3.8'
+
+services:
+
+  redis:
+    image: "redis:alpine"
+    container_name: passgage-integrator-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - passgage-integrator-network
+    environment:
+        - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - redis-vol:/data
+  app:
+    build: .
+    command: /bin/sh -c "FLASK_APP=api:server flask run --host=0.0.0.0 --port=5000 --reload"
+    container_name: passgage-integrator-app
+    volumes:
+      - ./App:/app
+    ports:
+      - "5000:5000"
+    depends_on:
+      - redis
+    networks:
+        - passgage-integrator-network
+  celery_worker:
+    build: .
+    command: celery -A tasks worker --loglevel=info
+    container_name: passgage-integrator-celery-worker
+    volumes:
+      - ./App:/app
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - app
+      - redis
+    networks:
+        - passgage-integrator-network
+
+  celery_beater:
+    build: .
+    command: celery -A worker beat --loglevel=info --schedule=/app/celerybeat-schedule
+    container_name: passgage-integrator-celery-beater
+    volumes:
+      - ./App:/app
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+    networks:
+        - passgage-integrator-network
+
+  celery_flower:
+    image: mher/flower:0.9.7
+    command: ['flower', '--broker=redis://redis:6379', '--port=5555']
+    container_name: passgage-integrator-celery-flower
+    volumes:
+      - ./App:/app
+    ports:
+      - "5555:5555"
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+      - celery_worker
+      - celery_beater
+    networks:
+        - passgage-integrator-network
+  database:
+    image: mysql:8.0
+    command: --default-authentication-plugin=mysql_native_password
+    container_name: passgage-integrator-database
+    environment:
+      MYSQL_ROOT_PASSWORD: 2110082061
+      MYSQL_DATABASE: passgage
+      MYSQL_USER: passgage
+      MYSQL_PASSWORD: 2110082061
+    ports:
+      - "3305:3306"
+    networks:
+        - passgage-integrator-network
+    volumes:
+      - db-data:/var/lib/mysql
+volumes:
+    redis-vol:
+        driver: local
+        name: passgage-integrator-redis-vol
+    db-data:
+      driver: local
+      name: passgage-integrator-db-data
+networks:
+    passgage-integrator-network:
+        driver: bridge
